@@ -1,0 +1,12 @@
+[package]
+name = "metal-error-repro"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+broken = []
+
+[dependencies]
+anyhow = "1.0.68"
+mtl = { package = "metal", version = "0.25.0" }
+objc = "0.2.7"

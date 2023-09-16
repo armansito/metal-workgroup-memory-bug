@@ -54,7 +54,8 @@ fn run() -> Result<()> {
     cmd_encoder.set_compute_pipeline_state(&pipeline);
     cmd_encoder.set_buffer(0, Some(&flag), 0);
     cmd_encoder.set_buffer(1, Some(&output), 0);
-    cmd_encoder.set_threadgroup_memory_length(std::mem::size_of::<u32>() as u64, 0);
+    // The arguments for setThreadGroupMemoryLength:atIndex: are swapped in metal-rs:
+    cmd_encoder.set_threadgroup_memory_length(0, std::mem::size_of::<u32>() as u64);
     cmd_encoder.dispatch_thread_groups(mtl::MTLSize::new(10, 1, 1), mtl::MTLSize::new(64, 1, 1));
     cmd_encoder.end_encoding();
 

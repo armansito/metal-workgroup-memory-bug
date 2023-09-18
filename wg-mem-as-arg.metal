@@ -3,10 +3,12 @@
 using namespace metal;
 
 kernel void entry_point(uint3               local_id    [[thread_position_in_threadgroup]],
-                        constant uint&      flag        [[buffer(0)]],
+                        device uint&        flag        [[buffer(0)]],
                         device atomic_uint& output      [[buffer(1)]],
                         threadgroup uint&   shared_flag [[threadgroup(0)]]) {
-    shared_flag = 0xffffffffu;
+    if (local_id.x == 0u) {
+        shared_flag = 0xffffffffu;
+    }
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
     if (local_id.x == 0u) {

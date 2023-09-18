@@ -6,31 +6,42 @@ target triple = "air64-apple-macosx13.0.0"
 %"struct.metal::_atomic" = type { i32 }
 
 ; Function Attrs: convergent nounwind
-define void @entry_point(<3 x i32> %0, ptr addrspace(2) noalias nocapture readonly dereferenceable(4) %1, ptr addrspace(1) noalias nocapture dereferenceable(4) %2, ptr addrspace(3) noalias nocapture dereferenceable(4) %3) local_unnamed_addr #0 {
-  store i32 -1, ptr addrspace(3) %3, align 4, !tbaa !23
-  tail call void @air.wg.barrier(i32 2, i32 1) #1
+define void @entry_point(<3 x i32> %0, ptr addrspace(1) noalias nocapture readonly dereferenceable(4) %1, ptr addrspace(1) noalias nocapture dereferenceable(4) %2, ptr addrspace(3) noalias nocapture dereferenceable(4) %3) local_unnamed_addr #0 {
   %5 = extractelement <3 x i32> %0, i64 0
   %6 = icmp eq i32 %5, 0
-  br i1 %6, label %7, label %10
+  br i1 %6, label %7, label %8
 
 7:                                                ; preds = %4
-  %8 = load i32, ptr addrspace(2) %1, align 4, !tbaa !23
-  store i32 %8, ptr addrspace(3) %3, align 4, !tbaa !23
-  %9 = icmp eq i32 %8, 0
-  br label %10
+  store i32 -1, ptr addrspace(3) %3, align 4, !tbaa !23
+  br label %8
 
-10:                                               ; preds = %7, %4
-  %11 = phi i1 [ %9, %7 ], [ false, %4 ]
+8:                                                ; preds = %7, %4
+  %9 = phi i1 [ true, %7 ], [ false, %4 ]
+  tail call void @air.wg.barrier(i32 2, i32 1) #1
+  br i1 %9, label %12, label %10
+
+10:                                               ; preds = %8
+  %11 = load i32, ptr addrspace(3) %3, align 4, !tbaa !23
+  br label %14
+
+12:                                               ; preds = %8
+  %13 = load i32, ptr addrspace(1) %1, align 4, !tbaa !23
+  store i32 %13, ptr addrspace(3) %3, align 4, !tbaa !23
+  br label %14
+
+14:                                               ; preds = %12, %10
+  %15 = phi i32 [ %11, %10 ], [ %13, %12 ]
   tail call void @air.wg.barrier(i32 2, i32 1) #1
   tail call void @air.wg.barrier(i32 2, i32 1) #1
-  br i1 %11, label %12, label %15
+  %16 = icmp eq i32 %15, 0
+  br i1 %16, label %17, label %20
 
-12:                                               ; preds = %10
-  %13 = getelementptr inbounds %"struct.metal::_atomic", ptr addrspace(1) %2, i64 0, i32 0
-  %14 = tail call i32 @air.atomic.global.add.u.i32(ptr addrspace(1) nocapture %13, i32 1, i32 0, i32 2, i1 true) #2
-  br label %15
+17:                                               ; preds = %14
+  %18 = getelementptr inbounds %"struct.metal::_atomic", ptr addrspace(1) %2, i64 0, i32 0
+  %19 = tail call i32 @air.atomic.global.add.u.i32(ptr addrspace(1) nocapture %18, i32 1, i32 0, i32 2, i1 true) #2
+  br label %20
 
-15:                                               ; preds = %12, %10
+20:                                               ; preds = %17, %14
   ret void
 }
 
@@ -64,7 +75,7 @@ attributes #2 = { nounwind memory(argmem: readwrite) }
 !9 = !{}
 !10 = !{!11, !12, !13, !15}
 !11 = !{i32 0, !"air.thread_position_in_threadgroup", !"air.arg_type_name", !"uint3", !"air.arg_name", !"local_id"}
-!12 = !{i32 1, !"air.buffer", !"air.buffer_size", i32 4, !"air.location_index", i32 0, i32 1, !"air.read", !"air.address_space", i32 2, !"air.arg_type_size", i32 4, !"air.arg_type_align_size", i32 4, !"air.arg_type_name", !"uint", !"air.arg_name", !"flag"}
+!12 = !{i32 1, !"air.buffer", !"air.buffer_size", i32 4, !"air.location_index", i32 0, i32 1, !"air.read_write", !"air.address_space", i32 1, !"air.arg_type_size", i32 4, !"air.arg_type_align_size", i32 4, !"air.arg_type_name", !"uint", !"air.arg_name", !"flag"}
 !13 = !{i32 2, !"air.buffer", !"air.buffer_size", i32 4, !"air.location_index", i32 1, i32 1, !"air.read_write", !"air.address_space", i32 1, !"air.struct_type_info", !14, !"air.arg_type_size", i32 4, !"air.arg_type_align_size", i32 4, !"air.arg_type_name", !"metal::_atomic", !"air.arg_name", !"output"}
 !14 = !{i32 0, i32 4, i32 0, !"uint", !"__s"}
 !15 = !{i32 3, !"air.buffer", !"air.buffer_size", i32 4, !"air.location_index", i32 0, i32 1, !"air.read_write", !"air.address_space", i32 3, !"air.arg_type_size", i32 4, !"air.arg_type_align_size", i32 4, !"air.arg_type_name", !"uint", !"air.arg_name", !"shared_flag"}

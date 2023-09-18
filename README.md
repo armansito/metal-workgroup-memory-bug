@@ -21,10 +21,12 @@ The broken program looks like this (see `wg-mem-as-arg.metal`):
 
 ```Metal
 kernel void entry_point(uint3               local_id    [[thread_position_in_threadgroup]],
-                        constant uint&      flag        [[buffer(0)]],
+                        device uint&        flag        [[buffer(0)]],
                         device atomic_uint& output      [[buffer(1)]],
                         threadgroup uint&   shared_flag [[threadgroup(0)]]) {
-    shared_flag = 0xffffffffu;
+    if (local_id.x == 0u) {
+        shared_flag = 0xffffffffu;
+    }
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
     if (local_id.x == 0u) {
@@ -46,11 +48,8 @@ kernel void entry_point(uint3               local_id    [[thread_position_in_thr
 This program does the following:
 
 1. Initialize a threadgroup shared variable called `shared_flag` to all 1s and execute a barrier.
-Following the barrier, this value is expected to be visible to all threads in the threadgroup.
-
-⚠️  NOTE: This technically causes undefined behavior since all threads write to the same variable. If
-I change only one thread to perform a write than the compiled AIR changes to the expected behavior.
-This is subtle but interesting nonetheless.
+Following the barrier, this value is expected to be visible to all threads in the threadgroup. Only
+one thread is designated to perform the assignment and the assignment should be well-defined.
 
 2. Conditionally assign the value of `flag` to `shared_flag`. `flag` is a uniform variable stored
 in global memory and it always holds the value `0`, which is assigned by the CPU before the dispatch.
@@ -66,9 +65,12 @@ a thread group should see the same value for `abort`, which is expected to be 0.
 
 Because `flag` always contains 0 and because all assignments and loads over `shared_flag` are
 synchronized, the final atomic increment should always execute. The CPU side dispatches 10
-thread groups with 64 threads each.
+thread groups with 96 threads each.
 
-The expected value of `output` is 640, however the program above produces 10. I tested this on both
+The expected value of `output` is 960, however the program above produces 320. In fact, the result is
+320 no matter how large the thread groups are.
+
+I tested this on both
 Apple M1 Pro and M1 Max. However, if I change the entry-point declaration to use a local threadgroup
 variable, I get the correct result:
 
@@ -127,41 +129,55 @@ Now look at the broken version of the program, which uses dynamic thread group m
 ; Function Attrs: convergent nounwind
 define void @entry_point(
     <3 x i32> %0,
-    ptr addrspace(2) noalias nocapture readonly dereferenceable(4) %1,
+    ptr addrspace(1) noalias nocapture readonly dereferenceable(4) %1,
     ptr addrspace(1) noalias nocapture dereferenceable(4) %2,
     ptr addrspace(3) noalias nocapture dereferenceable(4) %3) local_unnamed_addr #0 {
-  store i32 -1, ptr addrspace(3) %3, align 4, !tbaa !23              ; shared_flag = -1
-  tail call void @air.wg.barrier(i32 2, i32 1) #1                    ; barrier
-  %5 = extractelement <3 x i32> %0, i64 0                            ; if (local_id.x) == 0)
+  %5 = extractelement <3 x i32> %0, i64 0                            ; if (local_id.x == 0)
   %6 = icmp eq i32 %5, 0                                             ; ,,
-  br i1 %6, label %7, label %10                                      ; ,,
+  br i1 %6, label %7, label %8                                       ; ,,
 
 7:                                                ; preds = %4       ; {
-  %8 = load i32, ptr addrspace(2) %1, align 4, !tbaa !23             ;     // load `flag` (%8)
-  store i32 %8, ptr addrspace(3) %3, align 4, !tbaa !23              ;     shared_flag = %8
-  %9 = icmp eq i32 %8, 0                                             ;     %9 = (%8 == 0)
-  br label %10                                                       ; }
+  store i32 -1, ptr addrspace(3) %3, align 4, !tbaa !23              ;     shared_flag = -1;
+  br label %8                                                        ; }
 
-10:                                               ; preds = %7, %4
-  %11 = phi i1 [ %9, %7 ], [ false, %4 ]                             ; // Pick %9 if the branch was
-                                                                     ; // taken. Otherwise pick `false`
-                                                                     ; // This value is %11
+8:                                                ; preds = %7, %4
+  %9 = phi i1 [ true, %7 ], [ false, %4 ]                            ; // %9 represents whether the
+                                                                     ; // the branch was taken. I.e.,
+                                                                     ; // %9 = (local_id.x == 0u);
+                                                                     ;
+  tail call void @air.wg.barrier(i32 2, i32 1) #1                    ; // barrier
+  br i1 %9, label %12, label %10                                     ; if (local_id.x != 0u) {
+
+10:                                               ; preds = %8       ; {
+  %11 = load i32, ptr addrspace(3) %3, align 4, !tbaa !23            ;    %11 = shared_flag;
+  br label %14
+
+12:                                               ; preds = %8       ; } else {
+  %13 = load i32, ptr addrspace(1) %1, align 4, !tbaa !23            ;    %13 = flag;
+  store i32 %13, ptr addrspace(3) %3, align 4, !tbaa !23             ;    shared_flag = %13;
+  br label %14                                                       ; }
+
+14:                                               ; preds = %12, %10
+  %15 = phi i32 [ %11, %10 ], [ %13, %12 ]                           ; // Pick the value of `shared_flag` (%11)
+                                                                     ; // if (local_id.x != 0u). Otherwise pick
+                                                                     ; // the value of `flag` (%13).
+                                                                     ; // This value is %15.
   tail call void @air.wg.barrier(i32 2, i32 1) #1                    ; barrier
   tail call void @air.wg.barrier(i32 2, i32 1) #1                    ; barrier
-  br i1 %11, label %12, label %15                                    ; // label %12 increments `output`
-                                                                     ; // and carries on to label %15.
-                                                                     ; // label %15 returns
+  %16 = icmp eq i32 %15, 0                                           ; // increment output if `%15` is 0u.
+  br i1 %16, label %17, label %20                                    ; // otherwise return
 ```
-This looks very different. In particular, the decision to return (i.e. the value of `%11` based on
-whether or not `shared_flag == 0`) is non-uniform and potentially differs depending on whether the
-branch was taken. It involves no loads from thread group memory and the condition to return has been
-elided to be based on the value of `flag` at the time of the assignment. The two successive barrier
-calls have no meaningful effect since the value of `shared_flag` is never read.
+This looks very different. In particular, the decision to return (i.e. the value of `%15` based on
+whether or not `local_id.x == 0u`) is non-uniform is based on the value of `shared_flag` or `flag`
+depending on whether the branch was taken without taking the store (`shared_flag = flag`) and the
+following barrier into account. The two successive barrier calls have no meaningful effect since the
+value of `shared_flag` is loaded only in one of the branches and BEFORE the barriers.
 
-Based on this, it should be obvious that the first thread of each thread group will take the branch and
-execute `%7` but all other threads will branch directly to `%10`. `%11` will be `true` for the first
-thread in all thread groups and `false` for all others. This explains why the output is `10` instead
-of `640`.
+Based on this, the value of `%15` appears to be racy though should always be `0u` if
+`local_id.x == 0u`.
 
-This is observable with any thread group count. For a thread group count of `N`, I've observed that
-the broken program outputs `N` while the working program outputs `N * 64` (the expected result).
+It is interesting that the total count is always 320 no matter how big the thread groups are. This
+could possibly be explained by a lack of a race condition among the threads within a SIMD group
+(which has the size of 32 on M1), so that all threads in the the SIMD group that `local_id.x == 0u`
+falls on observe the store into `shared_flag` even if they are masked off during the store
+instruction. This is mostly speculation but it is plausible.

@@ -48,6 +48,10 @@ This program does the following:
 1. Initialize a threadgroup shared variable called `shared_flag` to all 1s and execute a barrier.
 Following the barrier, this value is expected to be visible to all threads in the threadgroup.
 
+⚠️  NOTE: This technically causes undefined behavior since all threads write to the same variable. If
+I change only one thread to perform a write than the compiled AIR changes to the expected behavior.
+This is subtle but interesting nonetheless.
+
 2. Conditionally assign the value of `flag` to `shared_flag`. `flag` is a uniform variable stored
 in global memory and it always holds the value `0`, which is assigned by the CPU before the dispatch.
 The assignment is performed only by the first thread in the thread group (i.e. `local_id.x == 0u` is
